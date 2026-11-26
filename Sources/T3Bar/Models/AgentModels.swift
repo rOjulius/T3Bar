@@ -83,6 +83,10 @@ struct T3Thread: Identifiable, Sendable, Equatable {
     var activeRunStartedAt: Date? = nil
     var latestStepText: String? = nil
 
+    // Enriched from t3_pending_request(action: "list" / "read") for waiting threads
+    var pendingUserRequests: [PendingUserRequest] = []
+    var didCheckPendingQuestions: Bool = false
+
     var id: String { threadId }
 
     var isSubagent: Bool {
@@ -90,7 +94,15 @@ struct T3Thread: Identifiable, Sendable, Equatable {
     }
 
     var needsAttention: Bool {
-        pendingRequestCount > 0 || status == .waiting
+        pendingRequestCount > 0 || !pendingUserRequests.isEmpty || status == .waiting
+    }
+
+    var hasAnswerableQuestions: Bool {
+        !pendingUserRequests.isEmpty
+    }
+
+    var needsPermissionApprovalInT3: Bool {
+        needsAttention && didCheckPendingQuestions && pendingUserRequests.isEmpty
     }
 
     var isDelegatedTask: Bool {
@@ -239,6 +251,185 @@ struct RawActivityItem: Decodable, Sendable {
     let title: String?
     let text: String?
     let updatedAt: String?
+}
+
+// MARK: - Pending User Questions (t3_pending_request)
+
+struct PendingRequestListPayload: Decodable, Sendable {
+    let requestIds: [String]
+
+    private enum CodingKeys: String, CodingKey {
+        case requestIds
+        case requests
+    }
+
+    private struct RawRequestRef: Decodable {
+        let requestId: String?
+        let id: String?
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if let ids = try container.decodeIfPresent([String].self, forKey: .requestIds) {
+            self.requestIds = ids
+        } else if let refs = try container.decodeIfPresent([RawRequestRef].self, forKey: .requests) {
+            self.requestIds = refs.compactMap { $0.requestId ?? $0.id }
+        } else {
+            self.requestIds = []
+        }
+    }
+}
+
+struct PendingUserQuestionOption: Identifiable, Sendable, Equatable, Decodable {
+    let label: String
+    let description: String?
+    let value: String?
+
+    var id: String { value ?? label }
+    var answerValue: String { value ?? label }
+
+    private enum CodingKeys: String, CodingKey {
+        case label
+        case title
+        case text
+        case description
+        case value
+    }
+
+    init(label: String, description: String? = nil, value: String? = nil) {
+        self.label = label
+        self.description = description
+        self.value = value
+    }
+
+    init(from decoder: Decoder) throws {
+        if let single = try? decoder.singleValueContainer(),
+           let plainString = try? single.decode(String.self) {
+            self.label = plainString
+            self.description = nil
+            self.value = plainString
+            return
+        }
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let decodedLabel = try container.decodeIfPresent(String.self, forKey: .label)
+            ?? container.decodeIfPresent(String.self, forKey: .title)
+            ?? container.decodeIfPresent(String.self, forKey: .text)
+            ?? container.decodeIfPresent(String.self, forKey: .value)
+            ?? "Option"
+        self.label = decodedLabel
+        self.description = try container.decodeIfPresent(String.self, forKey: .description)
+        self.value = try container.decodeIfPresent(String.self, forKey: .value)
+    }
+}
+
+struct PendingUserQuestion: Identifiable, Sendable, Equatable, Decodable {
+    let id: String
+    let header: String?
+    let question: String
+    let options: [PendingUserQuestionOption]
+    let multiSelect: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case key
+        case header
+        case title
+        case question
+        case prompt
+        case text
+        case options
+        case multiSelect
+        case isMultiSelect
+        case is_multi_select
+    }
+
+    init(id: String, header: String? = nil, question: String, options: [PendingUserQuestionOption] = [], multiSelect: Bool = false) {
+        self.id = id
+        self.header = header
+        self.question = question
+        self.options = options
+        self.multiSelect = multiSelect
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let qText = try container.decodeIfPresent(String.self, forKey: .question)
+            ?? container.decodeIfPresent(String.self, forKey: .prompt)
+            ?? container.decodeIfPresent(String.self, forKey: .text)
+            ?? "Agent needs your input"
+        self.question = qText
+        self.header = try container.decodeIfPresent(String.self, forKey: .header)
+            ?? container.decodeIfPresent(String.self, forKey: .title)
+        self.id = try container.decodeIfPresent(String.self, forKey: .id)
+            ?? container.decodeIfPresent(String.self, forKey: .key)
+            ?? self.header
+            ?? qText
+        self.options = try container.decodeIfPresent([PendingUserQuestionOption].self, forKey: .options) ?? []
+        let ms1 = try container.decodeIfPresent(Bool.self, forKey: .multiSelect)
+        let ms2 = try container.decodeIfPresent(Bool.self, forKey: .isMultiSelect)
+        let ms3 = try container.decodeIfPresent(Bool.self, forKey: .is_multi_select)
+        self.multiSelect = ms1 ?? ms2 ?? ms3 ?? false
+    }
+}
+
+struct PendingUserRequest: Identifiable, Sendable, Equatable {
+    let requestId: String
+    let threadId: String
+    let questions: [PendingUserQuestion]
+    let createdAt: Date?
+
+    var id: String { requestId }
+}
+
+struct PendingRequestReadPayload: Decodable, Sendable {
+    let requestId: String?
+    let threadId: String?
+    let questions: [PendingUserQuestion]?
+    let prompt: String?
+    let question: String?
+    let options: [PendingUserQuestionOption]?
+    let createdAt: String?
+    let request: NestedRequest?
+
+    struct NestedRequest: Decodable, Sendable {
+        let requestId: String?
+        let id: String?
+        let threadId: String?
+        let questions: [PendingUserQuestion]?
+        let prompt: String?
+        let question: String?
+        let options: [PendingUserQuestionOption]?
+        let createdAt: String?
+    }
+
+    func toDomain(fallbackRequestId: String, fallbackThreadId: String) -> PendingUserRequest {
+        let reqId = request?.requestId ?? request?.id ?? requestId ?? fallbackRequestId
+        let tid = request?.threadId ?? threadId ?? fallbackThreadId
+        let created = ISO8601DateParser.parse(request?.createdAt ?? createdAt)
+
+        var resolvedQuestions = request?.questions ?? questions ?? []
+        if resolvedQuestions.isEmpty {
+            let singlePrompt = request?.question ?? request?.prompt ?? question ?? prompt
+            if let singlePrompt, !singlePrompt.isEmpty {
+                resolvedQuestions = [
+                    PendingUserQuestion(
+                        id: "answer",
+                        header: nil,
+                        question: singlePrompt,
+                        options: request?.options ?? options ?? [],
+                        multiSelect: false
+                    )
+                ]
+            }
+        }
+
+        return PendingUserRequest(
+            requestId: reqId,
+            threadId: tid,
+            questions: resolvedQuestions,
+            createdAt: created
+        )
+    }
 }
 
 enum ISO8601DateParser {

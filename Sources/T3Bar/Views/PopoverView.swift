@@ -171,12 +171,16 @@ struct PopoverView: View {
                                 projectName: tree.projectName,
                                 isChild: false,
                                 isStopping: monitor.stoppingThreadIds.contains(tree.thread.threadId),
+                                respondingRequestIds: monitor.respondingRequestIds,
                                 showProjectBadge: monitor.settings.showProjectBadges,
                                 showProgressLine: monitor.settings.showProgressLine,
                                 compact: monitor.settings.compactRows,
                                 theme: theme,
                                 onOpen: { monitor.openInT3Code(tree.thread) },
-                                onStop: { monitor.stopAgent(tree.thread) }
+                                onStop: { monitor.stopAgent(tree.thread) },
+                                onRespond: { req, answers in
+                                    monitor.respondToPendingRequest(thread: tree.thread, request: req, answers: answers)
+                                }
                             )
 
                             ForEach(tree.children) { child in
@@ -185,12 +189,16 @@ struct PopoverView: View {
                                     projectName: child.projectName,
                                     isChild: true,
                                     isStopping: monitor.stoppingThreadIds.contains(child.thread.threadId),
+                                    respondingRequestIds: monitor.respondingRequestIds,
                                     showProjectBadge: monitor.settings.showProjectBadges,
                                     showProgressLine: monitor.settings.showProgressLine,
                                     compact: monitor.settings.compactRows,
                                     theme: theme,
                                     onOpen: { monitor.openInT3Code(child.thread) },
-                                    onStop: { monitor.stopAgent(child.thread) }
+                                    onStop: { monitor.stopAgent(child.thread) },
+                                    onRespond: { req, answers in
+                                        monitor.respondToPendingRequest(thread: child.thread, request: req, answers: answers)
+                                    }
                                 )
                             }
                         }
@@ -208,12 +216,14 @@ struct PopoverView: View {
                                 projectName: monitor.projectName(for: thread),
                                 isChild: false,
                                 isStopping: false,
+                                respondingRequestIds: [],
                                 showProjectBadge: monitor.settings.showProjectBadges,
                                 showProgressLine: monitor.settings.showProgressLine,
                                 compact: monitor.settings.compactRows,
                                 theme: theme,
                                 onOpen: { monitor.openInT3Code(thread) },
-                                onStop: {}
+                                onStop: {},
+                                onRespond: { _, _ in }
                             )
                         }
                     }

@@ -11,6 +11,7 @@ Keep track of all running T3 Code threads and nested subagents right from your m
 - **Live Agent & Subagent Tree** — displays active threads with nested subagents, project badges, model names, live elapsed timer, and latest tool/activity step.
 - **Top-Edge Hover-to-Open** — slide your cursor all the way to the top edge of the screen over the icon to open (toggleable in Settings).
 - **T3 Code Color Themes** — switch between all 6 T3 Code themes (**T3 Code**, **T3 Chat**, **Grove**, **Ocean**, **Ember**, **Iris**), System/Light/Dark appearance, and Liquid Glass tint intensity.
+- **Inline Question Replies & Approval Jump** — answer pending agent questions (single-choice, multi-select, or custom replies) directly inside T3Bar via `t3_pending_request`, and jump straight to T3 Code with a 1-click **Approve in T3 Code** button when a permission gate is waiting.
 - **1-Click Jump & Stop** — click any row to jump directly to that thread in T3 Code (`t3-thread://`), or stop running agents directly from the popover *(requires control scope)*.
 - **Native macOS Notifications** — optional alerts when an agent finishes, fails, or needs your input.
 

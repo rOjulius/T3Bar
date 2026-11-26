@@ -110,6 +110,43 @@ actor T3MCPClient {
         )
     }
 
+    func listPendingRequests(threadId: String) async throws -> [String] {
+        let data = try await callTool(
+            name: "t3_pending_request",
+            arguments: [
+                "action": "list",
+                "threadId": threadId
+            ]
+        )
+        let decoded = try JSONDecoder().decode(PendingRequestListPayload.self, from: data)
+        return decoded.requestIds
+    }
+
+    func readPendingRequest(threadId: String, requestId: String) async throws -> PendingUserRequest {
+        let data = try await callTool(
+            name: "t3_pending_request",
+            arguments: [
+                "action": "read",
+                "threadId": threadId,
+                "requestId": requestId
+            ]
+        )
+        let decoded = try JSONDecoder().decode(PendingRequestReadPayload.self, from: data)
+        return decoded.toDomain(fallbackRequestId: requestId, fallbackThreadId: threadId)
+    }
+
+    func respondToPendingRequest(threadId: String, requestId: String, answers: [String: String]) async throws {
+        _ = try await callTool(
+            name: "t3_pending_request",
+            arguments: [
+                "action": "respond",
+                "threadId": threadId,
+                "requestId": requestId,
+                "answers": answers
+            ]
+        )
+    }
+
     // MARK: - Streamable HTTP MCP Transport
 
     private func ensureInitialized() async throws {

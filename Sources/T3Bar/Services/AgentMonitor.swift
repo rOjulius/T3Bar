@@ -20,6 +20,7 @@ final class AgentMonitor {
     var authError: String? = nil
     var actionBanner: String? = nil
     var stoppingThreadIds: Set<String> = []
+    var respondingRequestIds: Set<String> = []
     var showSetup: Bool = false
 
     var notificationsEnabled: Bool {
@@ -297,6 +298,41 @@ final class AgentMonitor {
                 }
             }
 
+            // Load answerable pending user questions for waiting / attention threads (cap at 5)
+            let attentionIndices = threads.indices.filter { threads[$0].needsAttention && !threads[$0].archived }.prefix(5)
+            if !attentionIndices.isEmpty {
+                let attentionTargets = attentionIndices.map { ($0, threads[$0].threadId) }
+                let pendingResults = await withTaskGroup(of: (Int, Bool, [PendingUserRequest]).self) { group in
+                    for (idx, tid) in attentionTargets {
+                        group.addTask { [client] in
+                            do {
+                                let ids = try await client.listPendingRequests(threadId: tid)
+                                var requests: [PendingUserRequest] = []
+                                for rid in ids.prefix(3) {
+                                    if let detail = try? await client.readPendingRequest(threadId: tid, requestId: rid),
+                                       !detail.questions.isEmpty {
+                                        requests.append(detail)
+                                    }
+                                }
+                                return (idx, true, requests)
+                            } catch {
+                                return (idx, false, [])
+                            }
+                        }
+                    }
+                    var collected: [(Int, Bool, [PendingUserRequest])] = []
+                    for await item in group {
+                        collected.append(item)
+                    }
+                    return collected
+                }
+
+                for (idx, didCheck, requests) in pendingResults {
+                    threads[idx].didCheckPendingQuestions = didCheck
+                    threads[idx].pendingUserRequests = requests
+                }
+            }
+
             processNotificationsIfNeeded(newThreads: threads)
             self.allThreads = threads
             self.connectionState = .connected(lastUpdated: Date())
@@ -346,6 +382,44 @@ final class AgentMonitor {
         }
     }
 
+    func respondToPendingRequest(thread: T3Thread, request: PendingUserRequest, answers: [String: String]) {
+        guard !respondingRequestIds.contains(request.requestId) else { return }
+        respondingRequestIds.insert(request.requestId)
+        actionBanner = nil
+
+        Task {
+            do {
+                try await client.respondToPendingRequest(
+                    threadId: thread.threadId,
+                    requestId: request.requestId,
+                    answers: answers
+                )
+                respondingRequestIds.remove(request.requestId)
+                // Optimistically remove the answered question for instant feedback
+                if let idx = allThreads.firstIndex(where: { $0.threadId == thread.threadId }) {
+                    allThreads[idx].pendingUserRequests.removeAll { $0.requestId == request.requestId }
+                    if allThreads[idx].pendingRequestCount > 0 {
+                        allThreads[idx].pendingRequestCount -= 1
+                    }
+                }
+                await refreshNow()
+            } catch {
+                respondingRequestIds.remove(request.requestId)
+                let msg = error.localizedDescription
+                if msg.localizedCaseInsensitiveContains("scope")
+                    || msg.localizedCaseInsensitiveContains("read")
+                    || msg.localizedCaseInsensitiveContains("forbidden") {
+                    actionBanner = "Read-only connection — grant control scope in T3 Code to answer questions."
+                } else if msg.localizedCaseInsensitiveContains("not found") {
+                    actionBanner = "Question was already answered or closed in T3 Code."
+                    await refreshNow()
+                } else {
+                    actionBanner = "Could not send answer: \(msg)"
+                }
+            }
+        }
+    }
+
     // MARK: - Helpers
 
     private func processNotificationsIfNeeded(newThreads: [T3Thread]) {
@@ -377,10 +451,18 @@ final class AgentMonitor {
                     threadURL: thread.deepLinkURL
                 )
             }
-            // Transition: new pending question/request
-            else if settings.notifyOnNeedsInput && prev.pending == 0 && thread.pendingRequestCount > 0 {
+            // Transition: new pending question/request or entered waiting state
+            else if settings.notifyOnNeedsInput && ((prev.pending == 0 && thread.pendingRequestCount > 0) || (prev.status != .waiting && thread.status == .waiting)) {
+                let title: String
+                if thread.hasAnswerableQuestions {
+                    title = "Question from agent"
+                } else if thread.needsPermissionApprovalInT3 {
+                    title = "Approval needed in T3 Code"
+                } else {
+                    title = "Needs your input"
+                }
                 NotificationService.shared.notify(
-                    title: "Needs your input",
+                    title: title,
                     body: thread.title,
                     threadURL: thread.deepLinkURL
                 )

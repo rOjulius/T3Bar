@@ -5,102 +5,149 @@ struct AgentRowView: View {
     let projectName: String?
     let isChild: Bool
     let isStopping: Bool
+    let respondingRequestIds: Set<String>
     let showProjectBadge: Bool
     let showProgressLine: Bool
     let compact: Bool
     let theme: T3Theme
     let onOpen: () -> Void
     let onStop: () -> Void
+    let onRespond: (PendingUserRequest, [String: String]) -> Void
 
     @State private var isHovered = false
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            if isChild {
-                Image(systemName: "arrow.turn.down.right")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.tertiary)
-                    .padding(.top, 4)
-                    .padding(.leading, 8)
-            }
-
-            StatusIndicatorDot(thread: thread)
-                .padding(.top, 5)
-
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(thread.title)
-                        .font(.system(size: 12.5, weight: .medium))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-
-                    Spacer(minLength: 4)
-
-                    if thread.status.isActive, let start = thread.effectiveStartDate {
-                        ElapsedTimerText(since: start)
-                    } else if let updated = thread.updatedAt {
-                        Text(RelativeTimeFormatter.string(from: updated))
-                            .font(.system(size: 10.5, design: .monospaced))
-                            .foregroundStyle(.tertiary)
-                    }
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
+                if isChild {
+                    Image(systemName: "arrow.turn.down.right")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.tertiary)
+                        .padding(.top, 4)
+                        .padding(.leading, 8)
                 }
 
-                HStack(spacing: 5) {
-                    if showProjectBadge, let projectName, !projectName.isEmpty, !isChild {
-                        Text(projectName)
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 1.5)
-                            .background(theme.accent.opacity(0.14), in: Capsule())
+                StatusIndicatorDot(thread: thread)
+                    .padding(.top, 5)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(thread.title)
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundStyle(.primary)
                             .lineLimit(1)
+                            .truncationMode(.tail)
+
+                        Spacer(minLength: 4)
+
+                        if thread.status.isActive, let start = thread.effectiveStartDate {
+                            ElapsedTimerText(since: start)
+                        } else if let updated = thread.updatedAt {
+                            Text(RelativeTimeFormatter.string(from: updated))
+                                .font(.system(size: 10.5, design: .monospaced))
+                                .foregroundStyle(.tertiary)
+                        }
                     }
 
-                    Text(thread.shortModelName)
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    HStack(spacing: 5) {
+                        if showProjectBadge, let projectName, !projectName.isEmpty, !isChild {
+                            Text(projectName)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 1.5)
+                                .background(theme.accent.opacity(0.14), in: Capsule())
+                                .lineLimit(1)
+                        }
 
-                    if thread.needsAttention {
-                        Text("Needs input")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(.orange)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
-                            .background(.orange.opacity(0.14), in: Capsule())
-                    } else if !thread.status.isActive {
-                        Text(thread.status.displayLabel)
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(statusColor)
+                        Text(thread.shortModelName)
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+
+                        if thread.needsAttention {
+                            Text(attentionBadgeLabel)
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.orange)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(.orange.opacity(0.14), in: Capsule())
+                        } else if !thread.status.isActive {
+                            Text(thread.status.displayLabel)
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(statusColor)
+                        }
+                    }
+
+                    if showProgressLine && thread.status.isActive && !thread.hasAnswerableQuestions {
+                        Text(thread.latestStepText ?? "\(thread.status.displayLabel)…")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
                     }
                 }
 
-                if showProgressLine && thread.status.isActive {
-                    Text(thread.latestStepText ?? "\(thread.status.displayLabel)…")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                if thread.status.isActive {
+                    Button(action: onStop) {
+                        if isStopping {
+                            ProgressView()
+                                .controlSize(.mini)
+                                .frame(width: 18, height: 18)
+                        } else {
+                            Image(systemName: "stop.circle.fill")
+                                .font(.system(size: 15))
+                                .foregroundStyle(isHovered ? Color.red.opacity(0.9) : Color.secondary.opacity(0.55))
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .help("Stop agent")
+                    .disabled(isStopping)
+                    .padding(.top, 2)
                 }
             }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                onOpen()
+            }
 
-            if thread.status.isActive {
-                Button(action: onStop) {
-                    if isStopping {
-                        ProgressView()
-                            .controlSize(.mini)
-                            .frame(width: 18, height: 18)
-                    } else {
-                        Image(systemName: "stop.circle.fill")
-                            .font(.system(size: 15))
-                            .foregroundStyle(isHovered ? Color.red.opacity(0.9) : Color.secondary.opacity(0.55))
+            if thread.hasAnswerableQuestions {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(thread.pendingUserRequests) { request in
+                        PendingQuestionView(
+                            request: request,
+                            isSubmitting: respondingRequestIds.contains(request.requestId),
+                            theme: theme,
+                            onSubmit: { answers in
+                                onRespond(request, answers)
+                            }
+                        )
                     }
+                }
+                .padding(.leading, isChild ? 26 : 19)
+            } else if thread.needsPermissionApprovalInT3 {
+                Button(action: onOpen) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "lock.open.fill")
+                            .font(.system(size: 10.5, weight: .semibold))
+                        Text("Approve in T3 Code")
+                            .font(.system(size: 11, weight: .semibold))
+                        Spacer()
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    .foregroundStyle(.orange)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity)
+                    .background(Color.orange.opacity(0.14), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(Color.orange.opacity(0.32), lineWidth: 0.7)
+                    )
                 }
                 .buttonStyle(.plain)
-                .help("Stop agent")
-                .disabled(isStopping)
-                .padding(.top, 2)
+                .padding(.leading, isChild ? 26 : 19)
             }
         }
         .padding(.horizontal, 10)
@@ -113,15 +160,21 @@ struct AgentRowView: View {
             RoundedRectangle(cornerRadius: 11, style: .continuous)
                 .strokeBorder(rowBorder, lineWidth: 0.6)
         )
-        .contentShape(Rectangle())
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.12)) {
                 isHovered = hovering
             }
         }
-        .onTapGesture {
-            onOpen()
+    }
+
+    private var attentionBadgeLabel: String {
+        if thread.hasAnswerableQuestions {
+            return "Question"
         }
+        if thread.needsPermissionApprovalInT3 {
+            return "Approval needed"
+        }
+        return "Needs input"
     }
 
     private var rowBackground: Color {
